@@ -46,7 +46,8 @@ def pick_fields(
             message=f"Select fields for {object_name}:",
             choices=all_choices,
             multiselect=True,
-            long_instruction="Type to filter | Space to toggle | Enter to confirm | ★ to select all",
+            keybindings={"toggle": [{"key": "tab"}]},
+            long_instruction="Type to filter | Tab to toggle | Enter to confirm | ★ to select all",
             max_height="60%",
         ).execute()
 
