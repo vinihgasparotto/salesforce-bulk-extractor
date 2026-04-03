@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from rich.table import Table
 
 from .display import console
+
+QUEUE_FILE = Path("queue.json")
 
 FORMAT_LABELS = {
     "csv": "CSV (API names)",
@@ -66,3 +70,20 @@ class Queue:
             )
 
         console.print(table)
+
+
+def load_queue() -> "Queue":
+    if not QUEUE_FILE.exists():
+        return Queue()
+    try:
+        raw = json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+        return Queue(jobs=[ExtractJob(**item) for item in raw])
+    except Exception:
+        return Queue()
+
+
+def save_queue(queue: "Queue") -> None:
+    QUEUE_FILE.write_text(
+        json.dumps([asdict(j) for j in queue.jobs], indent=2),
+        encoding="utf-8",
+    )

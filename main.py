@@ -13,7 +13,7 @@ from sf_bulk.config import load_settings
 from sf_bulk.display import console, print_error, print_header, print_success, print_warning
 from sf_bulk.downloader import download_results
 from sf_bulk.fields import get_all_fields, pick_fields
-from sf_bulk.queue import FORMAT_LABELS, ExtractJob, Queue
+from sf_bulk.queue import FORMAT_LABELS, ExtractJob, Queue, load_queue, save_queue
 from sf_bulk.templates import (
     Template,
     create_template_prompt,
@@ -126,6 +126,7 @@ def _add_to_queue(session, queue: Queue, templates: list[Template]) -> None:
         output_filename=output_filename,
     )
     queue.add(job)
+    save_queue(queue)
 
     fmt_label = FORMAT_LABELS.get(output_format, output_format)
     deleted_label = "deleted included" if include_deleted else "deleted excluded"
@@ -179,6 +180,7 @@ def _remove_from_queue(queue: Queue) -> None:
         max_allowed=len(queue.jobs),
     ).execute()
     removed = queue.remove(int(index))
+    save_queue(queue)
     print_success(f"Removed: {removed.object_label} ({removed.object_name})")
 
 
@@ -220,6 +222,7 @@ def _run_queue(session, queue: Queue, settings) -> None:
 
     failed_names = {row[0] for row in summary_rows if row[4] is not None}
     queue.jobs = [j for j in queue.jobs if j.object_name in failed_names]
+    save_queue(queue)
 
 
 def _print_summary(rows: list) -> None:
@@ -264,7 +267,7 @@ def main() -> None:
     org_domain = session.instance_url.replace("https://", "").split(".")[0]
     print_success(f"Connected to {org_domain} ({session.instance_url})")
 
-    queue = Queue()
+    queue = load_queue()
     templates = load_templates()
 
     while True:

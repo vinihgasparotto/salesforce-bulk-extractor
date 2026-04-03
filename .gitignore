@@ -1,6 +1,7 @@
 .env
 .sf_tokens
 templates.json
+queue.json
 output/
 __pycache__/
 *.pyc
