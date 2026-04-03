@@ -53,6 +53,12 @@ def _add_to_queue(session, queue: Queue) -> None:
 
     soql = _build_soql(fields, obj["name"])
 
+    print_header("Query preview")
+    console.print(f"  [bold cyan]{soql}[/bold cyan]\n")
+    if not inquirer.confirm(message="Add this query to the queue?", default=True).execute():
+        print_warning("Cancelled — nothing added to queue.")
+        return
+
     job = ExtractJob(
         object_name=obj["name"],
         object_label=obj["label"],
