@@ -46,6 +46,11 @@ def _add_to_queue(session, queue: Queue) -> None:
         choices=OUTPUT_FORMAT_CHOICES,
     ).execute()
 
+    output_filename = inquirer.text(
+        message="Output filename (leave blank to auto-generate):",
+        instruction=f"e.g. my_accounts   →   my_accounts.csv",
+    ).execute().strip()
+
     soql = _build_soql(fields, obj["name"])
 
     job = ExtractJob(
@@ -56,6 +61,7 @@ def _add_to_queue(session, queue: Queue) -> None:
         include_deleted=include_deleted,
         output_format=output_format,
         soql=soql,
+        output_filename=output_filename,
     )
     queue.add(job)
 

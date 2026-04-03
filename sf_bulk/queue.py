@@ -24,6 +24,7 @@ class ExtractJob:
     include_deleted: bool
     output_format: str
     soql: str
+    output_filename: str = ""  # empty = auto-generate with timestamp
 
 
 @dataclass
@@ -52,6 +53,7 @@ class Queue:
         table.add_column("Fields", justify="right", width=8)
         table.add_column("Deleted", width=9)
         table.add_column("Format", width=16)
+        table.add_column("Filename", min_width=16)
 
         for i, job in enumerate(self.jobs, start=1):
             table.add_row(
@@ -60,6 +62,7 @@ class Queue:
                 str(len(job.fields)),
                 "Yes" if job.include_deleted else "No",
                 FORMAT_LABELS.get(job.output_format, job.output_format),
+                job.output_filename or "[dim]auto[/dim]",
             )
 
         console.print(table)

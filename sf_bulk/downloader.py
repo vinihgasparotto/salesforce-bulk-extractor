@@ -31,9 +31,13 @@ def download_results(
 ) -> tuple[Path, int]:
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ext = FORMAT_EXT.get(job.output_format, ".csv")
-    output_path = Path(output_dir) / f"{job.object_name}_{timestamp}{ext}"
+    if job.output_filename:
+        stem = Path(job.output_filename).stem  # strip any extension the user typed
+        output_path = Path(output_dir) / f"{stem}{ext}"
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = Path(output_dir) / f"{job.object_name}_{timestamp}{ext}"
 
     if job.output_format == "csv":
         total_rows = _download_csv(session, job_id, output_path, console)
