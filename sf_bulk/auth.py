@@ -132,7 +132,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/callback":
+        if parsed.path in ("/callback", "/OauthRedirect"):
             params = urllib.parse.parse_qs(parsed.query)
             _CallbackHandler.auth_code = params.get("code", [None])[0]
             self.send_response(200)
@@ -156,7 +156,10 @@ def _browser_oauth_flow(settings: Settings) -> SalesforceSession:
     # has configured their own Connected App.
     use_pkce = not settings.client_id
     client_id = settings.client_id or _DATALOADER_BULK_CLIENT_ID
-    redirect_uri = f"http://localhost:{settings.callback_port}/callback"
+    # /OauthRedirect is the path registered for the Data Loader client in Salesforce.
+    # Custom Connected Apps can use /callback instead.
+    redirect_path = "/OauthRedirect" if use_pkce else "/callback"
+    redirect_uri = f"http://localhost:{settings.callback_port}{redirect_path}"
 
     code_verifier, code_challenge = _pkce_pair()
 
