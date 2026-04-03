@@ -187,8 +187,22 @@ def _remove_from_queue(queue: Queue) -> None:
 def _run_queue(session, queue: Queue, settings) -> None:
     print_header(f"Running queue ({len(queue.jobs)} job(s))")
 
+    # Let user deselect any jobs they want to skip this run
+    selected_jobs = inquirer.checkbox(
+        message="Select jobs to run  (Tab to toggle, Enter to confirm):",
+        choices=[
+            {"name": f"{job.object_label} ({job.object_name})", "value": job, "enabled": True}
+            for job in queue.jobs
+        ],
+        keybindings={"toggle": [{"key": "tab"}]},
+    ).execute()
+
+    if not selected_jobs:
+        print_warning("No jobs selected — nothing to run.")
+        return
+
     summary_rows = []
-    jobs_snapshot = list(queue.jobs)
+    jobs_snapshot = selected_jobs
 
     for i, job in enumerate(jobs_snapshot, start=1):
         console.print(f"\n  [{i}/{len(jobs_snapshot)}] [bold]{job.object_label}[/bold]")
@@ -220,8 +234,10 @@ def _run_queue(session, queue: Queue, settings) -> None:
 
     _print_summary(summary_rows)
 
-    failed_names = {row[0] for row in summary_rows if row[4] is not None}
-    queue.jobs = [j for j in queue.jobs if j.object_name in failed_names]
+    # Remove successful jobs; keep failed + skipped jobs in the queue
+    failed_jobs = {job for job, (_, _, _, _, err) in zip(jobs_snapshot, summary_rows) if err is not None}
+    skipped_jobs = {job for job in queue.jobs if job not in selected_jobs}
+    queue.jobs = [j for j in queue.jobs if j in failed_jobs or j in skipped_jobs]
     save_queue(queue)
 
 
