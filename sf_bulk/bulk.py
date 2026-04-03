@@ -23,6 +23,10 @@ def submit_job(session: SalesforceSession, job: ExtractJob) -> str:
     return resp.json()["id"]
 
 
+def abort_job(session: SalesforceSession, job_id: str) -> None:
+    session.post(f"/jobs/query/{job_id}", json={"state": "Aborted"}, timeout=10)
+
+
 def poll_job(session: SalesforceSession, job_id: str, console: Console) -> None:
     terminal_states = {"JobComplete", "Failed", "Aborted"}
     attempt = 0

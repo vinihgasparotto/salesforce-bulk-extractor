@@ -8,7 +8,7 @@ from rich.table import Table
 
 from sf_bulk.auth import get_session
 from sf_bulk.browser import pick_object
-from sf_bulk.bulk import poll_job, submit_job
+from sf_bulk.bulk import abort_job, poll_job, submit_job
 from sf_bulk.config import load_settings
 from sf_bulk.display import console, print_error, print_header, print_success, print_warning
 from sf_bulk.downloader import download_results
@@ -204,9 +204,11 @@ def _run_queue(session, queue: Queue, settings) -> None:
     summary_rows = []
     jobs_snapshot = selected_jobs
 
+    abort_run = False
     for i, job in enumerate(jobs_snapshot, start=1):
         console.print(f"\n  [{i}/{len(jobs_snapshot)}] [bold]{job.object_label}[/bold]")
         job_start = time.monotonic()
+        job_id = None
 
         try:
             with console.status("[dim]Submitting job...[/dim]"):
@@ -231,6 +233,24 @@ def _run_queue(session, queue: Queue, settings) -> None:
             elapsed = timedelta(seconds=int(time.monotonic() - job_start))
             print_error(str(exc))
             summary_rows.append((job.object_name, 0, "—", str(elapsed), str(exc)))
+
+        except KeyboardInterrupt:
+            console.print("\n")
+            action = inquirer.select(
+                message="Job interrupted — what would you like to do?",
+                choices=[
+                    {"name": "Skip this job and continue with the rest", "value": "skip"},
+                    {"name": "Abort the entire run", "value": "abort"},
+                ],
+            ).execute()
+            elapsed = timedelta(seconds=int(time.monotonic() - job_start))
+            if job_id:
+                with console.status("[dim]Cancelling Salesforce job...[/dim]"):
+                    abort_job(session, job_id)
+            summary_rows.append((job.object_name, 0, "—", str(elapsed), "Skipped by user"))
+            if action == "abort":
+                abort_run = True
+                break
 
     _print_summary(summary_rows)
 
