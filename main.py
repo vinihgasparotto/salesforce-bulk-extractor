@@ -46,10 +46,25 @@ def _add_to_queue(session, queue: Queue) -> None:
         choices=OUTPUT_FORMAT_CHOICES,
     ).execute()
 
-    output_filename = inquirer.text(
-        message="Output filename (leave blank to auto-generate):",
-        instruction=f"e.g. my_accounts   →   my_accounts.csv",
-    ).execute().strip()
+    _auto_label = f"{obj['name']}_YYYYMMDD_HHMMSS"
+    _api_label = obj['name']
+    filename_choice = inquirer.select(
+        message="Output filename:",
+        choices=[
+            {"name": f"Auto-generate  ({_auto_label})", "value": "auto"},
+            {"name": f"Object API name  ({_api_label})", "value": "api"},
+            {"name": "Custom", "value": "custom"},
+        ],
+    ).execute()
+
+    if filename_choice == "auto":
+        output_filename = ""
+    elif filename_choice == "api":
+        output_filename = obj["name"]
+    else:
+        output_filename = inquirer.text(
+            message="Enter filename (without extension):",
+        ).execute().strip()
 
     soql = _build_soql(fields, obj["name"])
 
