@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.parse
 import webbrowser
@@ -13,6 +14,19 @@ import requests
 from .config import Settings
 
 TOKEN_FILE = Path(".sf_tokens")
+
+_SOAP_ENVELOPE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope
+    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:urn="urn:partner.soap.sforce.com">
+  <soapenv:Body>
+    <urn:login>
+      <urn:username>{username}</urn:username>
+      <urn:password>{password}</urn:password>
+    </urn:login>
+  </soapenv:Body>
+</soapenv:Envelope>"""
 
 
 class SalesforceSession:
@@ -39,15 +53,10 @@ def _raise_sf_error(response: requests.Response) -> None:
     except Exception:
         raise RuntimeError(f"HTTP {response.status_code}: {response.text[:300]}")
 
-    # OAuth error shape: {"error": "...", "error_description": "..."}
     if isinstance(body, dict) and "error_description" in body:
         raise RuntimeError(body["error_description"])
-
-    # REST API error shape: [{"errorCode": "...", "message": "..."}]
     if isinstance(body, list) and body and "errorCode" in body[0]:
         raise RuntimeError(f"{body[0]['errorCode']}: {body[0]['message']}")
-
-    # Bulk API error shape: {"errorCode": "...", "message": "..."}
     if isinstance(body, dict) and "errorCode" in body:
         raise RuntimeError(f"{body['errorCode']}: {body['message']}")
 
@@ -69,6 +78,45 @@ def _load_tokens() -> Optional[dict]:
             return None
     return None
 
+
+# ── Password / SOAP login (no Connected App required) ────────────────────────
+
+def _soap_login(settings: Settings) -> SalesforceSession:
+    password = (settings.password or "") + (settings.security_token or "")
+    soap_url = f"{settings.login_url}/services/Soap/u/{settings.api_version}"
+    body = _SOAP_ENVELOPE.format(
+        username=settings.username,
+        password=password,
+    )
+    resp = requests.post(
+        soap_url,
+        data=body.encode("utf-8"),
+        headers={
+            "Content-Type": "text/xml; charset=UTF-8",
+            "SOAPAction": "login",
+        },
+        timeout=30,
+    )
+
+    if resp.status_code != 200:
+        # Extract faultstring from SOAP fault
+        fault = re.search(r"<faultstring>(.*?)</faultstring>", resp.text, re.DOTALL)
+        msg = fault.group(1).strip() if fault else resp.text[:300]
+        raise RuntimeError(f"SOAP login failed: {msg}")
+
+    session_id = re.search(r"<sessionId>(.*?)</sessionId>", resp.text)
+    server_url = re.search(r"<serverUrl>(.*?)</serverUrl>", resp.text)
+
+    if not session_id or not server_url:
+        raise RuntimeError("SOAP login: could not parse sessionId or serverUrl from response.")
+
+    # Derive instance URL from serverUrl (e.g. https://na1.salesforce.com/services/Soap/u/59.0)
+    instance_url = "/".join(server_url.group(1).strip().split("/")[:3])
+
+    return SalesforceSession(instance_url, session_id.group(1).strip(), settings.api_version)
+
+
+# ── OAuth browser flow (Connected App required) ───────────────────────────────
 
 def _refresh_token_login(settings: Settings, cached: dict) -> SalesforceSession:
     resp = requests.post(
@@ -110,7 +158,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def log_message(self, format, *args):  # suppress server logs
+    def log_message(self, format, *args):
         pass
 
 
@@ -119,7 +167,7 @@ def _browser_oauth_flow(settings: Settings) -> SalesforceSession:
     auth_url = (
         f"{settings.login_url}/services/oauth2/authorize"
         f"?response_type=code"
-        f"&client_id={urllib.parse.quote(settings.client_id)}"
+        f"&client_id={urllib.parse.quote(settings.client_id or '')}"
         f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
     )
 
@@ -169,13 +217,18 @@ def _browser_oauth_flow(settings: Settings) -> SalesforceSession:
     return SalesforceSession(instance_url, access_token, settings.api_version)
 
 
+# ── Public entry point ────────────────────────────────────────────────────────
+
 def get_session(settings: Settings) -> SalesforceSession:
+    if settings.auth_method == "password":
+        return _soap_login(settings)
+
+    # OAuth: try cached refresh token first
     cached = _load_tokens()
     if cached and cached.get("refresh_token"):
         try:
             return _refresh_token_login(settings, cached)
         except RuntimeError:
-            # Token expired or revoked — fall through to browser flow
             TOKEN_FILE.unlink(missing_ok=True)
 
     return _browser_oauth_flow(settings)
