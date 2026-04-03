@@ -7,7 +7,7 @@ from InquirerPy import inquirer
 from rich.table import Table
 
 from sf_bulk.auth import get_session
-from sf_bulk.browser import pick_object
+from sf_bulk.browser import pick_objects
 from sf_bulk.bulk import abort_job, poll_job, submit_job
 from sf_bulk.config import load_settings
 from sf_bulk.display import console, print_error, print_header, print_success, print_warning
@@ -44,96 +44,172 @@ def _resolve_filename(filename_strategy: str, custom_filename: str, object_name:
     return ""  # auto
 
 
-def _add_to_queue(session, queue: Queue, templates: list[Template]) -> None:
-    print_header("Add object to queue")
+def _prompt_manual_options(obj_name: str) -> tuple[bool, str, str, str]:
+    """Ask include_deleted, format, filename. Returns (include_deleted, format, filename_strat, custom)."""
+    include_deleted = inquirer.confirm(
+        message="Include deleted records?", default=False,
+    ).execute()
 
-    obj = pick_object(session)
+    output_format = inquirer.select(
+        message="Output format:", choices=OUTPUT_FORMAT_CHOICES,
+    ).execute()
 
-    # Template selection — only shown if templates exist
-    template: Template | None = None
-    if templates:
-        template = pick_template(templates)
+    filename_choice = inquirer.select(
+        message="Output filename:",
+        choices=[
+            {"name": f"Auto-generate  ({obj_name}_YYYYMMDD_HHMMSS)", "value": "auto"},
+            {"name": f"Object API name  ({obj_name})", "value": "api"},
+            {"name": "Custom", "value": "custom"},
+        ],
+    ).execute()
 
-    if template:
-        # ── Template path ────────────────────────────────────────────────────
-        if template.field_strategy == "all":
-            with console.status(f"[dim]Fetching all fields for {obj['name']}...[/dim]"):
-                fields, field_labels = get_all_fields(session, obj["name"])
-        else:
-            print_header(f"Select fields for {obj['label']}")
-            fields, field_labels = pick_fields(session, obj["name"])
+    custom = ""
+    if filename_choice == "custom":
+        custom = inquirer.text(message="Enter filename (without extension):").execute().strip()
 
-        include_deleted = template.include_deleted
-        output_format = template.output_format
-        output_filename = _resolve_filename(
-            template.filename_strategy, template.custom_filename, obj["name"]
-        )
+    return include_deleted, output_format, filename_choice, custom
 
-        fmt_label = FORMAT_LABELS.get(output_format, output_format)
-        deleted_label = "deleted included" if include_deleted else "deleted excluded"
-        console.print(
-            f"  [dim]Template:[/dim] [bold]{template.name}[/bold]  "
-            f"({len(fields)} fields · {fmt_label} · {deleted_label})"
-        )
+
+def _build_job_from_template(session, obj: dict, template: Template) -> ExtractJob:
+    if template.field_strategy == "all":
+        with console.status(f"[dim]Fetching all fields for {obj['name']}...[/dim]"):
+            fields, field_labels = get_all_fields(session, obj["name"])
     else:
-        # ── Manual path ──────────────────────────────────────────────────────
         print_header(f"Select fields for {obj['label']}")
         fields, field_labels = pick_fields(session, obj["name"])
 
-        include_deleted = inquirer.confirm(
-            message="Include deleted records?",
-            default=False,
-        ).execute()
+    output_filename = _resolve_filename(
+        template.filename_strategy, template.custom_filename, obj["name"]
+    )
+    soql = _build_soql(fields, obj["name"])
+    return ExtractJob(
+        object_name=obj["name"], object_label=obj["label"],
+        fields=fields, field_labels=field_labels,
+        include_deleted=template.include_deleted,
+        output_format=template.output_format,
+        soql=soql, output_filename=output_filename,
+    )
 
-        output_format = inquirer.select(
-            message="Output format:",
-            choices=OUTPUT_FORMAT_CHOICES,
-        ).execute()
 
-        filename_choice = inquirer.select(
-            message="Output filename:",
+def _build_job_manual(session, obj: dict) -> ExtractJob:
+    print_header(f"Select fields for {obj['label']}")
+    fields, field_labels = pick_fields(session, obj["name"])
+    include_deleted, output_format, filename_choice, custom = _prompt_manual_options(obj["name"])
+    output_filename = _resolve_filename(filename_choice, custom, obj["name"])
+    soql = _build_soql(fields, obj["name"])
+    return ExtractJob(
+        object_name=obj["name"], object_label=obj["label"],
+        fields=fields, field_labels=field_labels,
+        include_deleted=include_deleted, output_format=output_format,
+        soql=soql, output_filename=output_filename,
+    )
+
+
+def _add_to_queue(session, queue: Queue, templates: list[Template]) -> None:
+    print_header("Add objects to queue")
+
+    objects = pick_objects(session)
+    if not objects:
+        print_warning("No objects selected.")
+        return
+
+    jobs: list[ExtractJob] = []
+
+    if len(objects) == 1:
+        # ── Single object — original flow ────────────────────────────────────
+        obj = objects[0]
+        template = pick_template(templates) if templates else None
+        if template:
+            job = _build_job_from_template(session, obj, template)
+            fmt_label = FORMAT_LABELS.get(job.output_format, job.output_format)
+            deleted_label = "deleted included" if job.include_deleted else "deleted excluded"
+            console.print(
+                f"  [dim]Template:[/dim] [bold]{template.name}[/bold]  "
+                f"({len(job.fields)} fields · {fmt_label} · {deleted_label})"
+            )
+        else:
+            job = _build_job_manual(session, obj)
+
+        soql_preview = job.soql
+        print_header("Query preview")
+        console.print(f"  [bold cyan]{soql_preview}[/bold cyan]\n")
+        if not inquirer.confirm(message="Add this query to the queue?", default=True).execute():
+            print_warning("Cancelled — nothing added to queue.")
+            return
+        jobs.append(job)
+
+    else:
+        # ── Multiple objects ─────────────────────────────────────────────────
+        console.print(f"  [dim]{len(objects)} objects selected.[/dim]\n")
+
+        config_mode = inquirer.select(
+            message="How would you like to configure them?",
             choices=[
-                {"name": f"Auto-generate  ({obj['name']}_YYYYMMDD_HHMMSS)", "value": "auto"},
-                {"name": f"Object API name  ({obj['name']})", "value": "api"},
-                {"name": "Custom", "value": "custom"},
+                {"name": "Same settings for all", "value": "same"},
+                {"name": "Configure each one individually", "value": "individual"},
             ],
         ).execute()
 
-        if filename_choice == "custom":
-            custom = inquirer.text(
-                message="Enter filename (without extension):",
-            ).execute().strip()
-        else:
-            custom = ""
+        if config_mode == "same":
+            # Pick options once
+            template = pick_template(templates) if templates else None
 
-        output_filename = _resolve_filename(filename_choice, custom, obj["name"])
+            if template:
+                fmt_label = FORMAT_LABELS.get(template.output_format, template.output_format)
+                deleted_label = "deleted included" if template.include_deleted else "deleted excluded"
+                console.print(
+                    f"  [dim]Template:[/dim] [bold]{template.name}[/bold]  "
+                    f"({fmt_label} · {deleted_label})"
+                )
+                for obj in objects:
+                    jobs.append(_build_job_from_template(session, obj, template))
+            else:
+                # Manual — ask options once using a placeholder name
+                include_deleted, output_format, filename_strat, custom = _prompt_manual_options("ObjectName")
+                for obj in objects:
+                    print_header(f"Select fields for {obj['label']}")
+                    fields, field_labels = pick_fields(session, obj["name"])
+                    output_filename = _resolve_filename(filename_strat, custom, obj["name"])
+                    soql = _build_soql(fields, obj["name"])
+                    jobs.append(ExtractJob(
+                        object_name=obj["name"], object_label=obj["label"],
+                        fields=fields, field_labels=field_labels,
+                        include_deleted=include_deleted, output_format=output_format,
+                        soql=soql, output_filename=output_filename,
+                    ))
 
-    soql = _build_soql(fields, obj["name"])
+            # Show all queries and confirm once
+            print_header("Query preview")
+            for job in jobs:
+                console.print(f"  [bold cyan]{job.soql}[/bold cyan]")
+            console.print()
+            if not inquirer.confirm(
+                message=f"Add all {len(jobs)} queries to the queue?", default=True
+            ).execute():
+                print_warning("Cancelled — nothing added to queue.")
+                return
 
-    print_header("Query preview")
-    console.print(f"  [bold cyan]{soql}[/bold cyan]\n")
-    if not inquirer.confirm(message="Add this query to the queue?", default=True).execute():
-        print_warning("Cancelled — nothing added to queue.")
-        return
+        else:  # individual
+            for obj in objects:
+                print_header(f"Configuring: {obj['label']} ({obj['name']})")
+                template = pick_template(templates) if templates else None
+                if template:
+                    job = _build_job_from_template(session, obj, template)
+                else:
+                    job = _build_job_manual(session, obj)
 
-    job = ExtractJob(
-        object_name=obj["name"],
-        object_label=obj["label"],
-        fields=fields,
-        field_labels=field_labels,
-        include_deleted=include_deleted,
-        output_format=output_format,
-        soql=soql,
-        output_filename=output_filename,
-    )
-    queue.add(job)
-    save_queue(queue)
+                print_header("Query preview")
+                console.print(f"  [bold cyan]{job.soql}[/bold cyan]\n")
+                if inquirer.confirm(message="Add this query to the queue?", default=True).execute():
+                    jobs.append(job)
+                else:
+                    print_warning(f"Skipped: {obj['label']}")
 
-    fmt_label = FORMAT_LABELS.get(output_format, output_format)
-    deleted_label = "deleted included" if include_deleted else "deleted excluded"
-    print_success(
-        f"Added: {obj['label']} — {len(fields)} field(s) — {fmt_label} — {deleted_label}"
-    )
+    for job in jobs:
+        queue.add(job)
+    if jobs:
+        save_queue(queue)
+        print_success(f"{len(jobs)} job(s) added to queue.")
 
 
 def _import_from_file(session, queue: Queue, templates) -> None:
