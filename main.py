@@ -14,6 +14,7 @@ from sf_bulk.display import console, print_error, print_header, print_success, p
 from sf_bulk.downloader import download_results
 from sf_bulk.fields import get_all_fields, pick_fields
 from sf_bulk.queue import FORMAT_LABELS, ExtractJob, Queue, load_queue, save_queue
+from sf_bulk.importer import DEFAULT_IMPORT_FILE, import_jobs_from_file
 from sf_bulk.templates import (
     Template,
     create_template_prompt,
@@ -133,6 +134,48 @@ def _add_to_queue(session, queue: Queue, templates: list[Template]) -> None:
     print_success(
         f"Added: {obj['label']} — {len(fields)} field(s) — {fmt_label} — {deleted_label}"
     )
+
+
+def _import_from_file(session, queue: Queue) -> None:
+    from pathlib import Path
+
+    print_header("Import queue from file")
+    raw_path = inquirer.text(
+        message="Path to import file:",
+        default=str(DEFAULT_IMPORT_FILE),
+    ).execute().strip()
+
+    file_path = Path(raw_path)
+    if not file_path.exists():
+        print_error(f"File not found: {file_path}")
+        return
+
+    console.print(f"  Reading [bold]{file_path}[/bold]...\n")
+    try:
+        jobs = import_jobs_from_file(session, file_path)
+    except RuntimeError as exc:
+        print_error(str(exc))
+        return
+
+    if not jobs:
+        print_warning("No valid jobs found in file.")
+        return
+
+    action = inquirer.select(
+        message=f"Found {len(jobs)} job(s) — how should they be added?",
+        choices=[
+            {"name": "Append to current queue", "value": "append"},
+            {"name": "Replace current queue", "value": "replace"},
+        ],
+    ).execute()
+
+    if action == "replace":
+        queue.jobs.clear()
+
+    for job in jobs:
+        queue.add(job)
+    save_queue(queue)
+    print_success(f"{len(jobs)} job(s) added to queue.")
 
 
 def _manage_templates(templates: list[Template]) -> None:
@@ -285,6 +328,7 @@ def _main_menu_choices(queue: Queue) -> list:
             {"name": "Remove from queue", "value": "remove"},
             {"name": "Run queue", "value": "run"},
         ]
+    choices.append({"name": "Import queue from file", "value": "import"})
     choices.append({"name": "Manage templates", "value": "templates"})
     choices.append({"name": "Quit", "value": "quit"})
     return choices
@@ -329,6 +373,13 @@ def main() -> None:
 
         elif choice == "run":
             _run_queue(session, queue, settings)
+
+        elif choice == "import":
+            try:
+                _import_from_file(session, queue)
+            except (RuntimeError, KeyboardInterrupt) as exc:
+                if isinstance(exc, RuntimeError):
+                    print_error(str(exc))
 
         elif choice == "templates":
             _manage_templates(templates)

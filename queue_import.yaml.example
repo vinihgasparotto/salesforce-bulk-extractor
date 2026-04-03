@@ -1,0 +1,35 @@
+# Salesforce Bulk Extractor — Queue Import File
+# Rename this file to queue_import.yaml (or any .yaml file) and edit as needed.
+# Then use "Import queue from file" from the main menu.
+#
+# Only 'object' is required. Everything else has sensible defaults.
+#
+# Fields:
+#   object   — Salesforce object API name (required)
+#   fields   — "all" or a list of field API names (default: all)
+#   deleted  — true/false, include deleted records (default: false)
+#   format   — csv, csv_labels, json, parquet, excel (default: csv)
+#   filename — auto, api, or a custom name without extension (default: api)
+
+# Minimal — all fields, CSV, API name as filename, no deleted
+- object: Account
+
+# Select specific fields
+- object: Contact
+  fields:
+    - Id
+    - Name
+    - Email
+    - Phone
+    - AccountId
+
+# Include deleted records, save as Parquet
+- object: Lead
+  deleted: true
+  format: parquet
+
+# Custom filename, specific fields, Excel output
+- object: Opportunity
+  fields: [Id, Name, Amount, StageName, CloseDate]
+  format: excel
+  filename: opportunities_export
