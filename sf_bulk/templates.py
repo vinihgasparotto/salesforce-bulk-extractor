@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +31,7 @@ class Template:
     output_format: str     # "csv" | "csv_labels" | "json" | "parquet" | "excel"
     filename_strategy: str # "auto" | "api" | "custom"
     custom_filename: str   # only used when filename_strategy == "custom"
+    is_default: bool = field(default=False)
 
 
 def load_templates() -> list[Template]:
@@ -48,6 +49,12 @@ def save_templates(templates: list[Template]) -> None:
         json.dumps([asdict(t) for t in templates], indent=2),
         encoding="utf-8",
     )
+
+
+def set_default(templates: list[Template], target: Template) -> None:
+    """Mark target as default and clear all others."""
+    for t in templates:
+        t.is_default = (t is target)
 
 
 def create_template_prompt() -> Optional[Template]:
@@ -84,6 +91,11 @@ def create_template_prompt() -> Optional[Template]:
             message="Custom filename (without extension):",
         ).execute().strip()
 
+    is_default = inquirer.confirm(
+        message="Set as default template?",
+        default=False,
+    ).execute()
+
     return Template(
         name=name,
         field_strategy=field_strategy,
@@ -91,15 +103,29 @@ def create_template_prompt() -> Optional[Template]:
         output_format=output_format,
         filename_strategy=filename_strategy,
         custom_filename=custom_filename,
+        is_default=is_default,
     )
 
 
 def pick_template(templates: list[Template]) -> Optional[Template]:
-    """Show template picker. Returns None if user picks 'no template'."""
-    choices = [{"name": "No template — ask me everything", "value": None}] + [
-        {"name": t.name, "value": t} for t in templates
+    """Show template picker. Default template is first and pre-selected."""
+    default_tmpl = next((t for t in templates if t.is_default), None)
+
+    # Build ordered list: default first, then the rest, then "ask me everything"
+    ordered = ([default_tmpl] if default_tmpl else []) + [
+        t for t in templates if not t.is_default
     ]
+
+    choices = [
+        {
+            "name": f"{t.name}  [default]" if t.is_default else t.name,
+            "value": t,
+        }
+        for t in ordered
+    ] + [{"name": "No template — ask me everything", "value": None}]
+
     return inquirer.select(
         message="Use a template?",
         choices=choices,
+        default=default_tmpl,  # pre-highlight the default
     ).execute()

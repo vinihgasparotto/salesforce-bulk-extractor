@@ -21,6 +21,7 @@ from sf_bulk.templates import (
     load_templates,
     pick_template,
     save_templates,
+    set_default,
 )
 
 OUTPUT_FORMAT_CHOICES = [
@@ -259,6 +260,7 @@ def _manage_templates(templates: list[Template]) -> None:
         print_header("Manage Templates")
         choices = [{"name": "Create new template", "value": "create"}]
         if templates:
+            choices.append({"name": "Set default template", "value": "set_default"})
             choices.append({"name": "Delete a template", "value": "delete"})
         choices.append({"name": "Back", "value": "back"})
 
@@ -267,11 +269,28 @@ def _manage_templates(templates: list[Template]) -> None:
         if action == "create":
             t = create_template_prompt()
             if t:
+                if t.is_default:
+                    set_default(templates, t)  # clear any existing default first
                 templates.append(t)
                 save_templates(templates)
-                print_success(f"Template '{t.name}' saved.")
+                print_success(f"Template '{t.name}' saved{' as default' if t.is_default else ''}.")
             else:
                 print_warning("No name entered — template not saved.")
+
+        elif action == "set_default":
+            choice = inquirer.select(
+                message="Select default template:",
+                choices=[
+                    {
+                        "name": f"{t.name}  [current default]" if t.is_default else t.name,
+                        "value": t,
+                    }
+                    for t in templates
+                ],
+            ).execute()
+            set_default(templates, choice)
+            save_templates(templates)
+            print_success(f"'{choice.name}' is now the default template.")
 
         elif action == "delete":
             choice = inquirer.select(
