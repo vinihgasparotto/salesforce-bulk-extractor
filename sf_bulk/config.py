@@ -64,8 +64,9 @@ def load_settings() -> Settings:
         password = require("SF_PASSWORD")
         security_token = os.getenv("SF_SECURITY_TOKEN", "").strip() or None  # optional for IP-trusted orgs
     else:
-        client_id = require("SF_CLIENT_ID")
-        client_secret = require("SF_CLIENT_SECRET")
+        # Both optional — if blank, the OAuth flow uses Data Loader's public client with PKCE
+        client_id = get("SF_CLIENT_ID")
+        client_secret = get("SF_CLIENT_SECRET")
 
     if missing:
         print("[ERROR] Missing required environment variables for auth_method=" + auth_method + ":")
