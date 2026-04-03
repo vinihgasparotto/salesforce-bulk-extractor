@@ -1,0 +1,2 @@
+# yaml_builder extra dependency — everything else is already in the main requirements.txt
+pyperclip>=1.8.0
