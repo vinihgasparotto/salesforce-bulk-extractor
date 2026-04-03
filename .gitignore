@@ -1,5 +1,6 @@
 .env
 .sf_tokens
+templates.json
 output/
 __pycache__/
 *.pyc

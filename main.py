@@ -12,8 +12,15 @@ from sf_bulk.bulk import poll_job, submit_job
 from sf_bulk.config import load_settings
 from sf_bulk.display import console, print_error, print_header, print_success, print_warning
 from sf_bulk.downloader import download_results
-from sf_bulk.fields import pick_fields
+from sf_bulk.fields import get_all_fields, pick_fields
 from sf_bulk.queue import FORMAT_LABELS, ExtractJob, Queue
+from sf_bulk.templates import (
+    Template,
+    create_template_prompt,
+    load_templates,
+    pick_template,
+    save_templates,
+)
 
 OUTPUT_FORMAT_CHOICES = [
     {"name": "CSV — Data Loader style (API names)", "value": "csv"},
@@ -28,43 +35,77 @@ def _build_soql(fields: list[str], object_name: str) -> str:
     return f"SELECT {', '.join(fields)} FROM {object_name}"
 
 
-def _add_to_queue(session, queue: Queue) -> None:
+def _resolve_filename(filename_strategy: str, custom_filename: str, object_name: str) -> str:
+    if filename_strategy == "api":
+        return object_name
+    if filename_strategy == "custom":
+        return custom_filename
+    return ""  # auto
+
+
+def _add_to_queue(session, queue: Queue, templates: list[Template]) -> None:
     print_header("Add object to queue")
 
     obj = pick_object(session)
-    print_header(f"Select fields for {obj['label']}")
 
-    fields, field_labels = pick_fields(session, obj["name"])
+    # Template selection — only shown if templates exist
+    template: Template | None = None
+    if templates:
+        template = pick_template(templates)
 
-    include_deleted = inquirer.confirm(
-        message="Include deleted records?",
-        default=False,
-    ).execute()
+    if template:
+        # ── Template path ────────────────────────────────────────────────────
+        if template.field_strategy == "all":
+            with console.status(f"[dim]Fetching all fields for {obj['name']}...[/dim]"):
+                fields, field_labels = get_all_fields(session, obj["name"])
+        else:
+            print_header(f"Select fields for {obj['label']}")
+            fields, field_labels = pick_fields(session, obj["name"])
 
-    output_format = inquirer.select(
-        message="Output format:",
-        choices=OUTPUT_FORMAT_CHOICES,
-    ).execute()
+        include_deleted = template.include_deleted
+        output_format = template.output_format
+        output_filename = _resolve_filename(
+            template.filename_strategy, template.custom_filename, obj["name"]
+        )
 
-    _auto_label = f"{obj['name']}_YYYYMMDD_HHMMSS"
-    _api_label = obj['name']
-    filename_choice = inquirer.select(
-        message="Output filename:",
-        choices=[
-            {"name": f"Auto-generate  ({_auto_label})", "value": "auto"},
-            {"name": f"Object API name  ({_api_label})", "value": "api"},
-            {"name": "Custom", "value": "custom"},
-        ],
-    ).execute()
-
-    if filename_choice == "auto":
-        output_filename = ""
-    elif filename_choice == "api":
-        output_filename = obj["name"]
+        fmt_label = FORMAT_LABELS.get(output_format, output_format)
+        deleted_label = "deleted included" if include_deleted else "deleted excluded"
+        console.print(
+            f"  [dim]Template:[/dim] [bold]{template.name}[/bold]  "
+            f"({len(fields)} fields · {fmt_label} · {deleted_label})"
+        )
     else:
-        output_filename = inquirer.text(
-            message="Enter filename (without extension):",
-        ).execute().strip()
+        # ── Manual path ──────────────────────────────────────────────────────
+        print_header(f"Select fields for {obj['label']}")
+        fields, field_labels = pick_fields(session, obj["name"])
+
+        include_deleted = inquirer.confirm(
+            message="Include deleted records?",
+            default=False,
+        ).execute()
+
+        output_format = inquirer.select(
+            message="Output format:",
+            choices=OUTPUT_FORMAT_CHOICES,
+        ).execute()
+
+        filename_choice = inquirer.select(
+            message="Output filename:",
+            choices=[
+                {"name": f"Auto-generate  ({obj['name']}_YYYYMMDD_HHMMSS)", "value": "auto"},
+                {"name": f"Object API name  ({obj['name']})", "value": "api"},
+                {"name": "Custom", "value": "custom"},
+            ],
+        ).execute()
+
+        if filename_choice == "custom":
+            custom = inquirer.text(
+                message="Enter filename (without extension):",
+            ).execute().strip()
+        else:
+            custom = ""
+
+        output_filename = _resolve_filename(filename_choice, custom, obj["name"])
 
     soql = _build_soql(fields, obj["name"])
 
@@ -91,6 +132,42 @@ def _add_to_queue(session, queue: Queue) -> None:
     print_success(
         f"Added: {obj['label']} — {len(fields)} field(s) — {fmt_label} — {deleted_label}"
     )
+
+
+def _manage_templates(templates: list[Template]) -> None:
+    while True:
+        print_header("Manage Templates")
+        choices = [{"name": "Create new template", "value": "create"}]
+        if templates:
+            choices.append({"name": "Delete a template", "value": "delete"})
+        choices.append({"name": "Back", "value": "back"})
+
+        action = inquirer.select(message="Choose action:", choices=choices).execute()
+
+        if action == "create":
+            t = create_template_prompt()
+            if t:
+                templates.append(t)
+                save_templates(templates)
+                print_success(f"Template '{t.name}' saved.")
+            else:
+                print_warning("No name entered — template not saved.")
+
+        elif action == "delete":
+            choice = inquirer.select(
+                message="Select template to delete:",
+                choices=[{"name": t.name, "value": t} for t in templates],
+            ).execute()
+            confirmed = inquirer.confirm(
+                message=f"Delete '{choice.name}'?", default=False
+            ).execute()
+            if confirmed:
+                templates.remove(choice)
+                save_templates(templates)
+                print_success(f"Template '{choice.name}' deleted.")
+
+        elif action == "back":
+            break
 
 
 def _remove_from_queue(queue: Queue) -> None:
@@ -141,7 +218,6 @@ def _run_queue(session, queue: Queue, settings) -> None:
 
     _print_summary(summary_rows)
 
-    # Remove only successful jobs from the queue
     failed_names = {row[0] for row in summary_rows if row[4] is not None}
     queue.jobs = [j for j in queue.jobs if j.object_name in failed_names]
 
@@ -170,6 +246,7 @@ def _main_menu_choices(queue: Queue) -> list:
             {"name": "Remove from queue", "value": "remove"},
             {"name": "Run queue", "value": "run"},
         ]
+    choices.append({"name": "Manage templates", "value": "templates"})
     choices.append({"name": "Quit", "value": "quit"})
     return choices
 
@@ -188,6 +265,7 @@ def main() -> None:
     print_success(f"Connected to {org_domain} ({session.instance_url})")
 
     queue = Queue()
+    templates = load_templates()
 
     while True:
         print_header("Main Menu")
@@ -198,7 +276,7 @@ def main() -> None:
 
         if choice == "add":
             try:
-                _add_to_queue(session, queue)
+                _add_to_queue(session, queue, templates)
             except (RuntimeError, KeyboardInterrupt) as exc:
                 if isinstance(exc, RuntimeError):
                     print_error(str(exc))
@@ -212,6 +290,9 @@ def main() -> None:
 
         elif choice == "run":
             _run_queue(session, queue, settings)
+
+        elif choice == "templates":
+            _manage_templates(templates)
 
         elif choice == "quit":
             break

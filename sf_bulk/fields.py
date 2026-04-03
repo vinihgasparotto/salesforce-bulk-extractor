@@ -8,6 +8,18 @@ from .auth import SalesforceSession, _raise_sf_error
 _SELECT_ALL_VALUE = "__SELECT_ALL__"
 
 
+def get_all_fields(
+    session: SalesforceSession, object_name: str
+) -> tuple[list[str], dict[str, str]]:
+    """Return all queryable fields for an object without any interactive prompt."""
+    resp = session.get(f"/sobjects/{object_name}/describe", timeout=30)
+    if not resp.ok:
+        _raise_sf_error(resp)
+    fields = resp.json().get("fields", [])
+    field_labels = {f["name"]: f["label"] for f in fields}
+    return list(field_labels.keys()), field_labels
+
+
 def pick_fields(
     session: SalesforceSession, object_name: str
 ) -> tuple[list[str], dict[str, str]]:
