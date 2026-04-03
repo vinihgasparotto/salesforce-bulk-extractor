@@ -136,7 +136,7 @@ def _add_to_queue(session, queue: Queue, templates: list[Template]) -> None:
     )
 
 
-def _import_from_file(session, queue: Queue) -> None:
+def _import_from_file(session, queue: Queue, templates) -> None:
     from pathlib import Path
 
     print_header("Import queue from file")
@@ -152,7 +152,7 @@ def _import_from_file(session, queue: Queue) -> None:
 
     console.print(f"  Reading [bold]{file_path}[/bold]...\n")
     try:
-        jobs = import_jobs_from_file(session, file_path)
+        jobs = import_jobs_from_file(session, file_path, templates)
     except RuntimeError as exc:
         print_error(str(exc))
         return
@@ -376,7 +376,7 @@ def main() -> None:
 
         elif choice == "import":
             try:
-                _import_from_file(session, queue)
+                _import_from_file(session, queue, templates)
             except (RuntimeError, KeyboardInterrupt) as exc:
                 if isinstance(exc, RuntimeError):
                     print_error(str(exc))

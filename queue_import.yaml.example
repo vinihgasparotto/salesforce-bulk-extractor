@@ -6,10 +6,22 @@
 #
 # Fields:
 #   object   — Salesforce object API name (required)
+#   template — name of a saved template to apply as defaults (optional)
 #   fields   — "all" or a list of field API names (default: all)
+#              explicit fields override the template
 #   deleted  — true/false, include deleted records (default: false)
 #   format   — csv, csv_labels, json, parquet, excel (default: csv)
 #   filename — auto, api, or a custom name without extension (default: api)
+#
+# Priority: explicit YAML key > template setting > built-in default
+
+# Use a saved template (applies its format/deleted/filename settings)
+- object: Account
+  template: Quick CSV
+
+- object: Contact
+  template: Quick CSV
+  fields: [Id, Name, Email]   # overrides the template's field strategy
 
 # Minimal — all fields, CSV, API name as filename, no deleted
 - object: Account

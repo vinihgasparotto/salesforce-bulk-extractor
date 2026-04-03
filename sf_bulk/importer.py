@@ -8,6 +8,7 @@ import yaml
 from .auth import SalesforceSession, _raise_sf_error
 from .display import print_error, print_warning, print_success
 from .queue import ExtractJob
+from .templates import Template
 
 VALID_FORMATS = {"csv", "csv_labels", "json", "parquet", "excel"}
 DEFAULT_IMPORT_FILE = Path("queue_import.yaml")
@@ -74,6 +75,7 @@ def _resolve_filename(raw: Any, object_name: str) -> str:
 def import_jobs_from_file(
     session: SalesforceSession,
     file_path: Path,
+    templates: list[Template] | None = None,
 ) -> list[ExtractJob]:
     """Parse a YAML import file and return a list of ExtractJob objects."""
     try:
@@ -84,6 +86,7 @@ def import_jobs_from_file(
     if not isinstance(raw, list):
         raise RuntimeError("Import file must be a YAML list of job entries.")
 
+    template_map = {t.name: t for t in (templates or [])}
     jobs: list[ExtractJob] = []
 
     for i, entry in enumerate(raw, start=1):
@@ -96,6 +99,14 @@ def import_jobs_from_file(
             print_warning(f"  Entry {i} missing 'object' — skipped.")
             continue
 
+        # Resolve template (if specified) and use it as defaults
+        tmpl: Template | None = None
+        tmpl_name = entry.get("template")
+        if tmpl_name:
+            tmpl = template_map.get(str(tmpl_name))
+            if not tmpl:
+                print_warning(f"  '{object_name}': template '{tmpl_name}' not found — ignoring.")
+
         # Validate object exists and is queryable
         obj_meta = _fetch_object_meta(session, object_name)
         if not obj_meta:
@@ -107,23 +118,53 @@ def import_jobs_from_file(
         object_label = obj_meta["label"]
 
         all_field_labels = _fetch_fields(session, object_name)
-        fields = _resolve_fields(entry.get("fields"), all_field_labels, object_name)
+
+        # Fields: explicit YAML > template field_strategy > default (all)
+        if "fields" in entry:
+            fields = _resolve_fields(entry["fields"], all_field_labels, object_name)
+        elif tmpl and tmpl.field_strategy == "all":
+            fields = list(all_field_labels.keys())
+        elif tmpl and tmpl.field_strategy == "ask":
+            # "ask" in a template means no preset — fall back to all when importing from file
+            fields = list(all_field_labels.keys())
+        else:
+            fields = list(all_field_labels.keys())
 
         if not fields:
             print_error(f"  '{object_name}' has no valid fields after filtering — skipped.")
             continue
 
-        output_format = str(entry.get("format", "csv")).strip().lower()
-        if output_format not in VALID_FORMATS:
-            print_warning(
-                f"  '{object_name}': unknown format '{output_format}', defaulting to 'csv'."
-            )
+        # format: explicit YAML > template > "csv"
+        if "format" in entry:
+            output_format = str(entry["format"]).strip().lower()
+        elif tmpl:
+            output_format = tmpl.output_format
+        else:
             output_format = "csv"
 
-        include_deleted_raw = entry.get("deleted", False)
-        include_deleted = bool(include_deleted_raw)
+        if output_format not in VALID_FORMATS:
+            print_warning(f"  '{object_name}': unknown format '{output_format}', defaulting to 'csv'.")
+            output_format = "csv"
 
-        output_filename = _resolve_filename(entry.get("filename"), object_name)
+        # deleted: explicit YAML > template > False
+        if "deleted" in entry:
+            include_deleted = bool(entry["deleted"])
+        elif tmpl:
+            include_deleted = tmpl.include_deleted
+        else:
+            include_deleted = False
+
+        # filename: explicit YAML > template > api name
+        if "filename" in entry:
+            output_filename = _resolve_filename(entry["filename"], object_name)
+        elif tmpl:
+            output_filename = _resolve_filename(
+                tmpl.filename_strategy if tmpl.filename_strategy != "custom" else tmpl.custom_filename,
+                object_name,
+            )
+        else:
+            output_filename = object_name  # default: api name
+
         soql = f"SELECT {', '.join(fields)} FROM {object_name}"
 
         jobs.append(ExtractJob(
