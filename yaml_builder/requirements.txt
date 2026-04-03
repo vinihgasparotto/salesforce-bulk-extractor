@@ -1,2 +1,3 @@
-# yaml_builder extra dependency — everything else is already in the main requirements.txt
+# yaml_builder extra dependencies — everything else is already in the main requirements.txt
+flask>=3.0.0
 pyperclip>=1.8.0

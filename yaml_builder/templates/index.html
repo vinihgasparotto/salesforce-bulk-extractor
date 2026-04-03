@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salesforce YAML Builder</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f172a;
+      --surface:   #1e293b;
+      --surface2:  #162032;
+      --border:    #2d3f58;
+      --border2:   #1e3050;
+      --accent:    #3b82f6;
+      --accent-dim:#1e3a6e;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --green:     #22c55e;
+      --green-bg:  #14532d;
+      --yellow:    #facc15;
+      --yellow-bg: #3f3206;
+      --cyan:      #67e8f9;
+      --radius:    6px;
+    }
+
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      font-size: 14px;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+    .badge-loading  { background: var(--yellow-bg); color: var(--yellow); }
+    .badge-connected{ background: var(--green-bg);  color: var(--green); }
+    .badge-error    { background: #450a0a; color: #f87171; }
+
+    #org-label { font-size: 12px; color: var(--muted); margin-left: 2px; }
+
+    /* ── Layout ── */
+    main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Left panel ── */
+    .left {
+      width: 360px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .panel-head h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .count-pill {
+      font-size: 11px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 1px 7px;
+      border-radius: 10px;
+    }
+
+    .search-wrap {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border2);
+      flex-shrink: 0;
+    }
+    .search-wrap input {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 11px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .search-wrap input:focus { border-color: var(--accent); }
+    .search-wrap input::placeholder { color: var(--muted); }
+
+    .action-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-bottom: 1px solid var(--border2);
+      flex-shrink: 0;
+    }
+    .action-bar button {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 0;
+    }
+    .action-bar button:hover { text-decoration: underline; }
+    .action-bar .sep { color: var(--border); }
+    .action-bar .vis-count { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+    .object-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .obj-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid #111d2e;
+      transition: background 0.1s;
+      user-select: none;
+    }
+    .obj-item:hover    { background: #162032; }
+    .obj-item.selected { background: #162a45; }
+
+    .obj-item input[type="checkbox"] {
+      accent-color: var(--accent);
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+      pointer-events: none;
+    }
+    .obj-name  { font-size: 13px; line-height: 1.3; }
+    .obj-api   { font-size: 11px; color: var(--muted); }
+
+    .list-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* ── Right panel ── */
+    .right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Template section */
+    .tmpl-section {
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tmpl-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-bottom: 1px solid var(--border2);
+      background: var(--surface);
+    }
+    .tmpl-head h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .tmpl-body { padding: 14px 18px; }
+
+    .mode-group {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .mode-opt {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 6px 13px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .mode-opt:hover { border-color: var(--accent); }
+    .mode-opt.active {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .mode-opt input { accent-color: var(--accent); }
+
+    .tmpl-picker { display: none; }
+
+    select.sf-select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+      min-width: 220px;
+    }
+    select.sf-select:focus { border-color: var(--accent); }
+
+    .no-templates-note {
+      font-size: 12px;
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .per-obj-wrap {
+      overflow-y: auto;
+      max-height: 150px;
+    }
+    table.per-obj {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.per-obj th {
+      text-align: left;
+      padding: 4px 8px;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 11px;
+      border-bottom: 1px solid var(--border2);
+    }
+    table.per-obj td {
+      padding: 5px 8px;
+      border-bottom: 1px solid #111d2e;
+    }
+    table.per-obj select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 3px 7px;
+      border-radius: 4px;
+      font-size: 12px;
+      outline: none;
+    }
+
+    /* YAML section */
+    .yaml-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 14px 18px;
+    }
+    .yaml-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-shrink: 0;
+    }
+    .yaml-head h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.1s;
+    }
+    .btn:hover:not(:disabled) { opacity: 0.85; }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-copy     { background: #1d4ed8; color: #fff; }
+    .btn-download { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+    .copy-ok {
+      font-size: 11px;
+      color: var(--green);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .copy-ok.show { opacity: 1; }
+
+    .yaml-pre {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      overflow: auto;
+      font-family: 'Consolas', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 13px;
+      color: var(--cyan);
+      white-space: pre;
+      line-height: 1.6;
+    }
+    .yaml-pre.empty { color: var(--muted); font-style: italic; }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Salesforce YAML Builder</h1>
+  <span class="badge badge-loading" id="status-badge">Connecting&hellip;</span>
+  <span id="org-label"></span>
+</header>
+
+<main>
+  <!-- ── Left: object browser ── -->
+  <div class="left">
+    <div class="panel-head">
+      <h2>Objects</h2>
+      <span class="count-pill" id="sel-count">0 selected</span>
+    </div>
+    <div class="search-wrap">
+      <input id="search" type="text" placeholder="Filter by name or API name&hellip;" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="action-bar">
+      <button id="btn-all">Select all</button>
+      <span class="sep">·</span>
+      <button id="btn-clear">Clear</button>
+      <span class="vis-count" id="vis-count"></span>
+    </div>
+    <div class="object-list" id="obj-list">
+      <div class="list-empty">Loading&hellip;</div>
+    </div>
+  </div>
+
+  <!-- ── Right: template + YAML ── -->
+  <div class="right">
+    <div class="tmpl-section" id="tmpl-section">
+      <div class="tmpl-head">
+        <h2>Template</h2>
+      </div>
+      <div class="tmpl-body" id="tmpl-body">
+        <div class="no-templates-note">Loading&hellip;</div>
+      </div>
+    </div>
+
+    <div class="yaml-section">
+      <div class="yaml-head">
+        <h2>Generated YAML</h2>
+        <button class="btn btn-copy" id="btn-copy" disabled>Copy to clipboard</button>
+        <button class="btn btn-download" id="btn-download" disabled>Download</button>
+        <span class="copy-ok" id="copy-ok">Copied!</span>
+      </div>
+      <pre class="yaml-pre empty" id="yaml-out">Select objects on the left to get started.</pre>
+    </div>
+  </div>
+</main>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let allObjects = [];      // [{name, label}, ...]
+  let templateNames = [];   // string[]
+  let selected = new Set(); // object api names
+
+  // ── Fetch data ─────────────────────────────────────────────────────────────
+  async function init() {
+    try {
+      const [objRes, tmplRes] = await Promise.all([
+        fetch('/api/objects'),
+        fetch('/api/templates'),
+      ]);
+      if (!objRes.ok) throw new Error(await objRes.text());
+
+      const objData  = await objRes.json();
+      const tmplData = await tmplRes.json();
+
+      allObjects    = objData.objects;
+      templateNames = tmplData.templates;
+
+      const badge = document.getElementById('status-badge');
+      badge.textContent = 'Connected';
+      badge.className   = 'badge badge-connected';
+
+      if (objData.org) {
+        document.getElementById('org-label').textContent = objData.org;
+      }
+
+      renderObjects();
+      buildTemplateUI();
+    } catch (err) {
+      const badge = document.getElementById('status-badge');
+      badge.textContent = 'Error';
+      badge.className   = 'badge badge-error';
+      document.getElementById('obj-list').innerHTML =
+        `<div class="list-empty" style="color:#f87171">Failed to load: ${err.message}</div>`;
+    }
+  }
+
+  // ── Object list ────────────────────────────────────────────────────────────
+  function filtered() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    if (!q) return allObjects;
+    return allObjects.filter(o =>
+      o.label.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)
+    );
+  }
+
+  function renderObjects() {
+    const list = document.getElementById('obj-list');
+    const items = filtered();
+
+    document.getElementById('vis-count').textContent =
+      items.length < allObjects.length
+        ? `${items.length} of ${allObjects.length}`
+        : `${allObjects.length} total`;
+
+    if (!items.length) {
+      list.innerHTML = '<div class="list-empty">No matches</div>';
+      return;
+    }
+
+    list.innerHTML = items.map(o => `
+      <div class="obj-item${selected.has(o.name) ? ' selected' : ''}"
+           data-name="${o.name}" data-label="${escHtml(o.label)}">
+        <input type="checkbox" tabindex="-1" ${selected.has(o.name) ? 'checked' : ''}>
+        <div>
+          <div class="obj-name">${escHtml(o.label)}</div>
+          <div class="obj-api">${escHtml(o.name)}</div>
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.obj-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const name = el.dataset.name;
+        if (selected.has(name)) {
+          selected.delete(name);
+          el.classList.remove('selected');
+          el.querySelector('input').checked = false;
+        } else {
+          selected.add(name);
+          el.classList.add('selected');
+          el.querySelector('input').checked = true;
+        }
+        updateSelCount();
+        refreshPerObjTable();
+        updateYaml();
+      });
+    });
+  }
+
+  function updateSelCount() {
+    document.getElementById('sel-count').textContent =
+      `${selected.size} selected`;
+  }
+
+  document.getElementById('search').addEventListener('input', renderObjects);
+
+  document.getElementById('btn-all').addEventListener('click', () => {
+    filtered().forEach(o => selected.add(o.name));
+    renderObjects();
+    updateSelCount();
+    refreshPerObjTable();
+    updateYaml();
+  });
+
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    selected.clear();
+    renderObjects();
+    updateSelCount();
+    refreshPerObjTable();
+    updateYaml();
+  });
+
+  // ── Template UI ────────────────────────────────────────────────────────────
+  function buildTemplateUI() {
+    const body = document.getElementById('tmpl-body');
+
+    if (!templateNames.length) {
+      body.innerHTML = `<p class="no-templates-note">
+        No templates saved. Create one via the main CLI (Manage templates).
+      </p>`;
+      return;
+    }
+
+    const optHtml = templateNames
+      .map(t => `<option value="${escAttr(t)}">${escHtml(t)}</option>`)
+      .join('');
+    const optHtmlNone = `<option value="">(none)</option>${optHtml}`;
+
+    body.innerHTML = `
+      <div class="mode-group">
+        <label class="mode-opt active" id="opt-none">
+          <input type="radio" name="mode" value="none" checked> No template
+        </label>
+        <label class="mode-opt" id="opt-all">
+          <input type="radio" name="mode" value="all"> Same for all
+        </label>
+        <label class="mode-opt" id="opt-per">
+          <input type="radio" name="mode" value="per"> Per object
+        </label>
+      </div>
+      <div class="tmpl-picker" id="pick-all">
+        <select class="sf-select" id="tmpl-all-sel">${optHtml}</select>
+      </div>
+      <div class="tmpl-picker" id="pick-per">
+        <div class="per-obj-wrap">
+          <table class="per-obj">
+            <thead><tr><th>Object</th><th>Template</th></tr></thead>
+            <tbody id="per-obj-body"></tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    // Radio change
+    document.querySelectorAll('input[name="mode"]').forEach(r => {
+      r.addEventListener('change', () => {
+        document.querySelectorAll('.mode-opt').forEach(el => el.classList.remove('active'));
+        r.closest('.mode-opt').classList.add('active');
+        document.getElementById('pick-all').style.display = r.value === 'all' ? '' : 'none';
+        document.getElementById('pick-per').style.display = r.value === 'per' ? '' : 'none';
+        refreshPerObjTable();
+        updateYaml();
+      });
+    });
+
+    document.getElementById('tmpl-all-sel').addEventListener('change', updateYaml);
+  }
+
+  function getMode() {
+    const r = document.querySelector('input[name="mode"]:checked');
+    return r ? r.value : 'none';
+  }
+
+  function refreshPerObjTable() {
+    const tbody = document.getElementById('per-obj-body');
+    if (!tbody) return;
+
+    const selObjs = allObjects.filter(o => selected.has(o.name));
+    if (!selObjs.length) {
+      tbody.innerHTML = `<tr><td colspan="2" style="color:var(--muted);font-style:italic;font-size:12px;padding:8px">No objects selected.</td></tr>`;
+      return;
+    }
+
+    const optHtmlNone = `<option value="">(none)</option>` +
+      templateNames.map(t => `<option value="${escAttr(t)}">${escHtml(t)}</option>`).join('');
+
+    tbody.innerHTML = selObjs.map(o => `
+      <tr>
+        <td>
+          <span>${escHtml(o.label)}</span>
+          <span style="color:var(--muted);font-size:11px;margin-left:4px">${escHtml(o.name)}</span>
+        </td>
+        <td>
+          <select data-obj="${escAttr(o.name)}" onchange="updateYaml()">${optHtmlNone}</select>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  // ── YAML generation ────────────────────────────────────────────────────────
+  function buildYaml() {
+    const ordered = allObjects.filter(o => selected.has(o.name));
+    if (!ordered.length) return '';
+
+    const mode = getMode();
+
+    return ordered.map(o => {
+      let tmpl = null;
+
+      if (mode === 'all') {
+        const sel = document.getElementById('tmpl-all-sel');
+        tmpl = sel ? sel.value : null;
+      } else if (mode === 'per') {
+        const sel = document.querySelector(`[data-obj="${CSS.escape(o.name)}"]`);
+        tmpl = sel ? sel.value : null;
+      }
+
+      let line = `- object: ${o.name}`;
+      if (tmpl) line += `\n  template: ${tmpl}`;
+      return line;
+    }).join('\n') + '\n';
+  }
+
+  function updateYaml() {
+    const yaml = buildYaml();
+    const pre  = document.getElementById('yaml-out');
+
+    if (!yaml) {
+      pre.textContent = 'Select objects on the left to get started.';
+      pre.classList.add('empty');
+      document.getElementById('btn-copy').disabled     = true;
+      document.getElementById('btn-download').disabled = true;
+      return;
+    }
+
+    pre.textContent = yaml;
+    pre.classList.remove('empty');
+    document.getElementById('btn-copy').disabled     = false;
+    document.getElementById('btn-download').disabled = false;
+  }
+
+  // ── Copy / Download ────────────────────────────────────────────────────────
+  document.getElementById('btn-copy').addEventListener('click', () => {
+    const yaml = buildYaml();
+    navigator.clipboard.writeText(yaml).then(() => {
+      const el = document.getElementById('copy-ok');
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2000);
+    });
+  });
+
+  document.getElementById('btn-download').addEventListener('click', () => {
+    const blob = new Blob([buildYaml()], { type: 'text/yaml' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'queue_import.yaml';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  function escAttr(s) { return escHtml(s); }
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+  init();
+</script>
+
+</body>
+</html>
